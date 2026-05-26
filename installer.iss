@@ -24,7 +24,7 @@ Source: "dist\StampilaPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 [Icons]
 Name: "{group}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"
 Name: "{group}\Uninstall PDF Stampila"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"; Tasks: desktopicon
+Name: "{userdesktop}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\StampilaPDF.exe"; Description: "Launch PDF Stampila"; Flags: nowait postinstall skipifsilent

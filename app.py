@@ -7,7 +7,7 @@ PDF Ștampilă v2 - Aplică ștampile pe documente PDF.
 - Opacitate, scară, aplicare pe toate paginile
 """
 
-import os, io, sys, time, socket
+import os, io, sys, time, socket, platform, subprocess
 from flask import Flask, request, send_file, jsonify, render_template_string
 import fitz
 from PIL import Image
@@ -404,19 +404,31 @@ async function as(){
 
   document.getElementById('ab').textContent='⏳ Procesare...';
   document.getElementById('ab').disabled=true;
+  const isDesktop=typeof window.pywebview!=='undefined';
   try{
-    let r=await fetch('/api/apply',{method:'POST',body:f});
-    if(!r.ok)throw new Error('Eroare la aplicare');
-    let warns=r.headers.get('X-Warnings');
-    let stamps=r.headers.get('X-Stamps-Applied');
-    let blob=await r.blob();
-    let url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download=PF.name.replace('.pdf','')+'_stampilat.pdf';a.click();
-    URL.revokeObjectURL(url);
-    let msg='✅ Documentul cu ștampilă a fost descărcat!';
-    if(stamps)msg+=' ('+stamps+' ștampilă/e aplicată/e)';
-    if(warns){msg+='<br>⚠️ '+warns.split(' | ').join('<br>⚠️ ');}
-    ss('success',msg);
+    if(isDesktop){
+      let r=await fetch('/api/apply-save',{method:'POST',body:f});
+      if(!r.ok)throw new Error('Eroare la aplicare');
+      let d=await r.json();
+      let msg='✅ Documentul a fost salvat și deschis!';
+      if(d.stamps)msg+=' ('+d.stamps+' ștampilă/e)';
+      if(d.warnings&&d.warnings.length)msg+='<br>⚠️ '+d.warnings.join('<br>⚠️ ');
+      msg+='<br><small>📁 '+d.path+'</small>';
+      ss('success',msg);
+    }else{
+      let r=await fetch('/api/apply',{method:'POST',body:f});
+      if(!r.ok)throw new Error('Eroare la aplicare');
+      let warns=r.headers.get('X-Warnings');
+      let stamps=r.headers.get('X-Stamps-Applied');
+      let blob=await r.blob();
+      let url=URL.createObjectURL(blob),a=document.createElement('a');
+      a.href=url;a.download=PF.name.replace('.pdf','')+'_stampilat.pdf';a.click();
+      URL.revokeObjectURL(url);
+      let msg='✅ Documentul cu ștampilă a fost descărcat!';
+      if(stamps)msg+=' ('+stamps+' ștampilă/e aplicată/e)';
+      if(warns){msg+='<br>⚠️ '+warns.split(' | ').join('<br>⚠️ ');}
+      ss('success',msg);
+    }
   }catch(e){ss('error','Eroare: '+e.message)}
   document.getElementById('ab').textContent='✅ Aplică Ștampila & Descarcă';
   document.getElementById('ab').disabled=false;
@@ -508,6 +520,212 @@ def apply():
     response.headers['X-Warnings'] = ' | '.join(warnings).encode('ascii', 'replace').decode('ascii') if warnings else ''
     response.headers['X-Stamps-Applied'] = str(n)
     return response
+
+
+REPORT_DIR = os.path.join(_APP_DATA, 'reports')
+os.makedirs(REPORT_DIR, exist_ok=True)
+
+REPORT_HTML = '''<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raportare erori - PDF Ștampilă</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:24px}
+h1{text-align:center;color:#f8fafc;font-size:1.6em;margin-bottom:6px}
+.sub{text-align:center;color:#94a3b8;margin-bottom:28px;font-size:.9em}
+.C{max-width:860px;margin:0 auto}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:22px;margin-bottom:18px}
+.card h2{color:#38bdf8;margin-bottom:14px;font-size:1.05em}
+.dz{border:2px dashed #475569;border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:.3s}
+.dz:hover,.dz.dg{border-color:#38bdf8;background:rgba(56,189,248,.05)}
+.dz .ic{font-size:2.2em;margin-bottom:8px}
+.dz .lb{color:#94a3b8;font-size:.9em}
+input[type=file]{display:none}
+textarea{width:100%;padding:10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:.93em;resize:vertical;min-height:90px;margin-top:12px}
+.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:1em;font-weight:600;cursor:pointer;background:#2563eb;color:#fff;margin-top:14px;transition:.2s}
+.btn:hover{background:#1d4ed8}.btn:disabled{background:#475569;cursor:not-allowed}
+.st{padding:10px 14px;border-radius:8px;margin-top:12px;font-size:.9em}
+.si{background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);color:#38bdf8}
+.ss{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#22c55e}
+.se{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#ef4444}
+.previews{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.previews img{max-height:120px;border-radius:6px;border:1px solid #334155}
+.reports{display:flex;flex-direction:column;gap:14px}
+.rep{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px}
+.rep .meta{color:#64748b;font-size:.8em;margin-bottom:8px}
+.rep .msg{color:#e2e8f0;font-size:.92em;margin-bottom:10px;white-space:pre-wrap}
+.rep-imgs{display:flex;flex-wrap:wrap;gap:8px}
+.rep-imgs img{max-height:200px;border-radius:6px;border:1px solid #334155;cursor:pointer}
+.rep-imgs img:hover{border-color:#38bdf8}
+.empty{color:#475569;text-align:center;padding:20px;font-size:.9em}
+.back{display:inline-block;margin-bottom:18px;color:#38bdf8;text-decoration:none;font-size:.9em}
+.back:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="C">
+<a href="/" class="back">← Înapoi la aplicație</a>
+<h1>🐛 Raportare erori</h1>
+<p class="sub">Trimite screenshot-uri cu erorile întâlnite</p>
+
+<div class="card">
+<h2>Trimite un raport nou</h2>
+<div class="dz" id="dz" onclick="document.getElementById('fi').click()">
+  <div class="ic">🖼️</div>
+  <div class="lb">Click sau trage screenshot-urile aici (PNG, JPG)</div>
+</div>
+<input type="file" id="fi" accept="image/*" multiple>
+<div class="previews" id="pv"></div>
+<textarea id="msg" placeholder="Descrie eroarea (opțional): ce ai făcut, ce s-a întâmplat..."></textarea>
+<button class="btn" id="sb" onclick="send()">📤 Trimite raport</button>
+<div id="st"></div>
+</div>
+
+<div class="card">
+<h2>Rapoarte primite</h2>
+<div class="reports" id="rl">{{REPORTS}}</div>
+</div>
+</div>
+
+<script>
+let FILES=[];
+let fi=document.getElementById('fi');
+let dz=document.getElementById('dz');
+
+fi.onchange=e=>{addFiles(e.target.files)};
+dz.ondragover=e=>{e.preventDefault();dz.classList.add('dg')};
+dz.ondragleave=()=>dz.classList.remove('dg');
+dz.ondrop=e=>{e.preventDefault();dz.classList.remove('dg');addFiles(e.dataTransfer.files)};
+
+function addFiles(list){
+  for(let f of list){FILES.push(f)}
+  let pv=document.getElementById('pv');pv.innerHTML='';
+  FILES.forEach(f=>{let r=new FileReader();r.onload=e=>{let img=document.createElement('img');img.src=e.target.result;pv.appendChild(img)};r.readAsDataURL(f)});
+}
+
+async function send(){
+  if(FILES.length===0){st('error','Adaugă cel puțin un screenshot.');return}
+  let fd=new FormData();
+  FILES.forEach(f=>fd.append('imgs',f));
+  fd.append('msg',document.getElementById('msg').value);
+  document.getElementById('sb').disabled=true;
+  document.getElementById('sb').textContent='⏳ Se trimite...';
+  try{
+    let r=await fetch('/report',{method:'POST',body:fd});
+    let d=await r.json();
+    if(d.ok){st('success','✅ Raport trimis! Mulțumesc.');FILES=[];document.getElementById('pv').innerHTML='';document.getElementById('msg').value='';setTimeout(()=>location.reload(),1200);}
+    else{st('error','Eroare: '+d.error);}
+  }catch(e){st('error','Eroare rețea: '+e.message)}
+  document.getElementById('sb').disabled=false;
+  document.getElementById('sb').textContent='📤 Trimite raport';
+}
+
+function st(t,m){document.getElementById('st').innerHTML='<div class="st s'+t[0]+'">'+m+'</div>'}
+</script>
+</body>
+</html>'''
+
+
+@app.route('/report', methods=['GET', 'POST'])
+def report():
+    if request.method == 'POST':
+        imgs = request.files.getlist('imgs')
+        msg = request.form.get('msg', '').strip()
+        if not imgs:
+            return jsonify({'ok': False, 'error': 'Nicio imagine'}), 400
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        rep_dir = os.path.join(REPORT_DIR, ts)
+        os.makedirs(rep_dir, exist_ok=True)
+        for i, img in enumerate(imgs):
+            ext = os.path.splitext(img.filename)[1] or '.png'
+            img.save(os.path.join(rep_dir, f'img{i}{ext}'))
+        if msg:
+            with open(os.path.join(rep_dir, 'msg.txt'), 'w', encoding='utf-8') as f:
+                f.write(msg)
+        return jsonify({'ok': True})
+
+    # Build reports list HTML
+    reps_html = ''
+    if os.path.exists(REPORT_DIR):
+        entries = sorted(os.listdir(REPORT_DIR), reverse=True)
+        for entry in entries:
+            ep = os.path.join(REPORT_DIR, entry)
+            if not os.path.isdir(ep):
+                continue
+            msg_file = os.path.join(ep, 'msg.txt')
+            msg_text = open(msg_file, encoding='utf-8').read() if os.path.exists(msg_file) else ''
+            imgs_html = ''
+            for fn in sorted(os.listdir(ep)):
+                if fn.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
+                    imgs_html += f'<img src="/report/img/{entry}/{fn}" onclick="window.open(this.src)">'
+            ts_fmt = f"{entry[6:8]}.{entry[4:6]}.{entry[:4]} {entry[9:11]}:{entry[11:13]}:{entry[13:15]}"
+            reps_html += f'''<div class="rep">
+<div class="meta">📅 {ts_fmt}</div>
+{"<div class='msg'>"+msg_text+"</div>" if msg_text else ""}
+<div class="rep-imgs">{imgs_html}</div>
+</div>'''
+    if not reps_html:
+        reps_html = '<div class="empty">Niciun raport încă.</div>'
+    return render_template_string(REPORT_HTML.replace('{{REPORTS}}', reps_html))
+
+
+@app.route('/report/img/<ts>/<filename>')
+def report_img(ts, filename):
+    safe_ts = os.path.basename(ts)
+    safe_fn = os.path.basename(filename)
+    path = os.path.join(REPORT_DIR, safe_ts, safe_fn)
+    if not os.path.exists(path):
+        return '', 404
+    return send_file(path)
+
+
+def open_file_os(path):
+    if platform.system() == 'Windows':
+        os.startfile(path)
+    elif platform.system() == 'Darwin':
+        subprocess.Popen(['open', path])
+    else:
+        subprocess.Popen(['xdg-open', path])
+
+
+@app.route('/api/apply-save', methods=['POST'])
+def apply_save():
+    """Desktop mode: saves stamped PDF to Downloads folder and opens it."""
+    pf = request.files.get('pdf')
+    sf = request.files.get('stamp')
+    if not pf or not sf:
+        return jsonify({'error': 'Missing files'}), 400
+
+    pdf_b, stamp_b = pf.read(), sf.read()
+    sc = float(request.form.get('scale', 0.8))
+    mg = float(request.form.get('margin', 8))
+    op = float(request.form.get('opacity', 1.0))
+    md = request.form.get('mode', 'text')
+    anchor = request.form.get('anchor', 'CONTASIST')
+    ap = request.form.get('all_pages', '0') == '1'
+    pg = int(request.form.get('page', 0))
+    mx = request.form.get('manual_x', type=float)
+    my = request.form.get('manual_y', type=float)
+    rot = int(request.form.get('rotation', 0))
+
+    result_bytes, n, warnings = apply_stamp(pdf_b, stamp_b, mode=md, scale=sc, margin=mg,
+                                   manual_x=mx, manual_y=my, manual_page=pg,
+                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
+
+    name = (pf.filename or 'document').removesuffix('.pdf')
+    downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
+    os.makedirs(downloads, exist_ok=True)
+    out_path = os.path.join(downloads, f'{name}_stampilat.pdf')
+    with open(out_path, 'wb') as f:
+        f.write(result_bytes)
+
+    open_file_os(out_path)
+
+    return jsonify({'ok': True, 'path': out_path, 'stamps': n,
+                    'warnings': warnings})
 
 
 def start_flask():
