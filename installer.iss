@@ -22,9 +22,9 @@ Name: "desktopicon"; Description: "Create Desktop shortcut"; GroupDescription: "
 Source: "dist\StampilaPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
-Name: "{group}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"
+Name: "{group}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"; IconFilename: "{app}\StampilaPDF.exe"
 Name: "{group}\Uninstall PDF Stampila"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"; Tasks: desktopicon
+Name: "{userdesktop}\PDF Stampila"; Filename: "{app}\StampilaPDF.exe"; IconFilename: "{app}\StampilaPDF.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\StampilaPDF.exe"; Description: "Launch PDF Stampila"; Flags: nowait postinstall skipifsilent

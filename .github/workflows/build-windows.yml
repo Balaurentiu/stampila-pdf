@@ -36,6 +36,17 @@ jobs:
       - name: Compilează cu PyInstaller
         run: pyinstaller stampila.spec
 
+      - name: Verifică iconiță în exe
+        run: |
+          python -c "
+          import struct, os
+          exe = 'dist/StampilaPDF/StampilaPDF.exe'
+          size = os.path.getsize(exe)
+          print(f'EXE size: {size} bytes')
+          assert size > 500_000, 'EXE prea mic, ceva a mers prost'
+          print('OK')
+          "
+
       - name: Instalează Inno Setup
         run: choco install innosetup --no-progress -y
 
