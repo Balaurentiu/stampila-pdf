@@ -18,6 +18,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create Desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
+[InstallDelete]
+Type: files; Name: "{commondesktop}\PDF Stampila.lnk"
+Type: files; Name: "{userdesktop}\PDF Stampila.lnk"
+Type: files; Name: "{commondesktop}\StampilaPDF.lnk"
+Type: files; Name: "{userdesktop}\StampilaPDF.lnk"
+
 [Files]
 Source: "dist\StampilaPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
