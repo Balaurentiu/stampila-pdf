@@ -1,0 +1,39 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout cod
+        uses: actions/checkout@v4
+
+      - name: Setează Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalează dependențe
+        run: pip install flask PyMuPDF Pillow numpy pywebview pyinstaller
+
+      - name: Compilează cu PyInstaller
+        run: pyinstaller stampila.spec
+
+      - name: Instalează Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Creează installer
+        run: |
+          $version = "${{ github.ref_name }}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$version installer.iss
+
+      - name: Publică Release pe GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer-output/StampilaPDF-Setup-*.exe
+          generate_release_notes: true

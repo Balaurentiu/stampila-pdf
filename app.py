@@ -503,5 +503,25 @@ def apply():
     return response
 
 
+def start_flask():
+    app.run(host='127.0.0.1', port=8090, debug=False, use_reloader=False)
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8090, debug=False)
+    import sys
+    # Desktop mode: launch PyWebView window
+    if '--server' not in sys.argv:
+        try:
+            import webview
+            import threading
+            t = threading.Thread(target=start_flask, daemon=True)
+            t.start()
+            import time; time.sleep(1)  # wait for Flask to start
+            webview.create_window('PDF Ștampilă', 'http://127.0.0.1:8090',
+                                  width=1100, height=820, resizable=True)
+            webview.start()
+        except ImportError:
+            # No pywebview — fall back to server mode
+            app.run(host='0.0.0.0', port=8090, debug=False)
+    else:
+        app.run(host='0.0.0.0', port=8090, debug=False)
