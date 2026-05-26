@@ -7,15 +7,22 @@ PDF Ștampilă v2 - Aplică ștampile pe documente PDF.
 - Opacitate, scară, aplicare pe toate paginile
 """
 
-import os, io, time
+import os, io, sys, time, socket
 from flask import Flask, request, send_file, jsonify, render_template_string
 import fitz
 from PIL import Image
 import numpy as np
 
 app = Flask(__name__)
-UPLOAD = '/data/stampila/uploads'
-OUTPUT = '/data/stampila/output'
+
+# Paths — writable in both dev and packaged (PyInstaller) mode
+if getattr(sys, 'frozen', False):
+    _APP_DATA = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'StampilaPDF')
+else:
+    _APP_DATA = os.path.dirname(os.path.abspath(__file__))
+
+UPLOAD = os.path.join(_APP_DATA, 'uploads')
+OUTPUT = os.path.join(_APP_DATA, 'output')
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
@@ -507,21 +514,31 @@ def start_flask():
     app.run(host='127.0.0.1', port=8090, debug=False, use_reloader=False)
 
 
+def wait_for_flask(port=8090, timeout=15):
+    """Poll until Flask is accepting connections."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            s = socket.create_connection(('127.0.0.1', port), timeout=0.5)
+            s.close()
+            return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
 if __name__ == '__main__':
-    import sys
-    # Desktop mode: launch PyWebView window
     if '--server' not in sys.argv:
         try:
             import webview
             import threading
             t = threading.Thread(target=start_flask, daemon=True)
             t.start()
-            import time; time.sleep(1)  # wait for Flask to start
+            wait_for_flask()
             webview.create_window('PDF Ștampilă', 'http://127.0.0.1:8090',
                                   width=1100, height=820, resizable=True)
             webview.start()
         except ImportError:
-            # No pywebview — fall back to server mode
             app.run(host='0.0.0.0', port=8090, debug=False)
     else:
         app.run(host='0.0.0.0', port=8090, debug=False)

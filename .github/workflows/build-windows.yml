@@ -18,8 +18,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalează dependențe
+      - name: Instalează dependențe Python
         run: pip install flask PyMuPDF Pillow numpy pywebview pyinstaller
+
+      - name: Convertește PNG la ICO
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('stampila_curata.png').convert('RGBA')
+          img.save('stampila.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+          print('ICO generat.')
+          "
 
       - name: Compilează cu PyInstaller
         run: pyinstaller stampila.spec
@@ -28,12 +37,16 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Creează installer
+        shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
+          New-Item -ItemType Directory -Force -Path installer-output | Out-Null
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$version installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Publică Release pe GitHub
         uses: softprops/action-gh-release@v2
         with:
+          name: "PDF Ștampilă ${{ github.ref_name }}"
           files: installer-output/StampilaPDF-Setup-*.exe
           generate_release_notes: true

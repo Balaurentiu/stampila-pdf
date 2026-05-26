@@ -10,7 +10,6 @@ datas = [
 datas += collect_data_files('webview')
 
 hiddenimports = collect_submodules('webview') + [
-    'PIL._tkinter_finder',
     'engineio.async_drivers.threading',
 ]
 
@@ -23,7 +22,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter', 'matplotlib', 'scipy'],
     noarchive=False,
 )
 
@@ -40,7 +39,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon='stampila_curata.png',
+    icon='stampila.ico',
 )
 
 coll = COLLECT(
