@@ -7,7 +7,7 @@ PDF Ștampilă v2 - Aplică ștampile pe documente PDF.
 - Opacitate, scară, aplicare pe toate paginile
 """
 
-import os, io, sys, time, socket, platform, subprocess
+import os, io, sys, time, socket, platform, subprocess, tempfile, shutil
 from flask import Flask, request, send_file, jsonify, render_template_string
 import fitz
 from PIL import Image
@@ -407,14 +407,22 @@ async function as(){
   const isDesktop=typeof window.pywebview!=='undefined';
   try{
     if(isDesktop){
-      let r=await fetch('/api/apply-save',{method:'POST',body:f});
-      if(!r.ok)throw new Error('Eroare la aplicare');
+      // Step 1: process PDF on server, get token
+      let r=await fetch('/api/apply-prepare',{method:'POST',body:f});
+      if(!r.ok)throw new Error('Eroare la procesare');
       let d=await r.json();
-      let msg='✅ Documentul a fost salvat și deschis!';
-      if(d.stamps)msg+=' ('+d.stamps+' ștampilă/e)';
-      if(d.warnings&&d.warnings.length)msg+='<br>⚠️ '+d.warnings.join('<br>⚠️ ');
-      msg+='<br><small>📁 '+d.path+'</small>';
-      ss('success',msg);
+      if(!d.ok)throw new Error(d.error||'Eroare necunoscuta');
+      // Step 2: open native Save As dialog via PyWebView API
+      ss('info','Alege locația de salvare...');
+      let res=await window.pywebview.api.save_dialog(d.token, d.suggested);
+      if(res.cancelled){ss('info','Salvare anulată.');
+      }else if(res.ok){
+        let msg='✅ Documentul a fost salvat!';
+        if(d.stamps)msg+=' ('+d.stamps+' ștampilă/e)';
+        if(d.warnings&&d.warnings.length)msg+='<br>⚠️ '+d.warnings.join('<br>⚠️ ');
+        msg+='<br><small>📁 '+res.path+'</small>';
+        ss('success',msg);
+      }else{throw new Error(res.error||'Eroare la salvare');}
     }else{
       let r=await fetch('/api/apply',{method:'POST',body:f});
       if(!r.ok)throw new Error('Eroare la aplicare');
@@ -682,6 +690,10 @@ def report_img(ts, filename):
     return send_file(path)
 
 
+# Temp files waiting for save dialog { token -> tmp_path }
+_pending_files = {}
+
+
 def open_file_os(path):
     if platform.system() == 'Windows':
         os.startfile(path)
@@ -689,6 +701,41 @@ def open_file_os(path):
         subprocess.Popen(['open', path])
     else:
         subprocess.Popen(['xdg-open', path])
+
+
+@app.route('/api/apply-prepare', methods=['POST'])
+def apply_prepare():
+    """Desktop mode step 1: process PDF, save to temp file, return token for save dialog."""
+    pf = request.files.get('pdf')
+    sf = request.files.get('stamp')
+    if not pf or not sf:
+        return jsonify({'error': 'Missing files'}), 400
+
+    pdf_b, stamp_b = pf.read(), sf.read()
+    sc = float(request.form.get('scale', 0.8))
+    mg = float(request.form.get('margin', 8))
+    op = float(request.form.get('opacity', 1.0))
+    md = request.form.get('mode', 'text')
+    anchor = request.form.get('anchor', 'CONTASIST')
+    ap = request.form.get('all_pages', '0') == '1'
+    pg = int(request.form.get('page', 0))
+    mx = request.form.get('manual_x', type=float)
+    my = request.form.get('manual_y', type=float)
+    rot = int(request.form.get('rotation', 0))
+
+    result_bytes, n, warnings = apply_stamp(pdf_b, stamp_b, mode=md, scale=sc, margin=mg,
+                                   manual_x=mx, manual_y=my, manual_page=pg,
+                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
+
+    token = str(int(time.time() * 1000))
+    tmp = tempfile.mktemp(suffix='.pdf')
+    with open(tmp, 'wb') as f:
+        f.write(result_bytes)
+    _pending_files[token] = tmp
+
+    name = (pf.filename or 'document').removesuffix('.pdf') + '_stampilat.pdf'
+    return jsonify({'ok': True, 'token': token, 'suggested': name,
+                    'stamps': n, 'warnings': warnings})
 
 
 @app.route('/api/apply-save', methods=['POST'])
@@ -728,6 +775,32 @@ def apply_save():
                     'warnings': warnings})
 
 
+class DesktopAPI:
+    def save_dialog(self, token, suggested_name):
+        """Called from JS: opens native Save As dialog and writes the temp file to chosen path."""
+        import webview
+        tmp_path = _pending_files.pop(token, None)
+        if not tmp_path or not os.path.exists(tmp_path):
+            return {'ok': False, 'error': 'Fișier temporar negăsit'}
+        try:
+            result = webview.windows[0].create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=suggested_name,
+                file_types=('PDF (*.pdf)',)
+            )
+            if result:
+                save_path = result[0] if isinstance(result, (list, tuple)) else result
+                if not save_path.lower().endswith('.pdf'):
+                    save_path += '.pdf'
+                shutil.copy2(tmp_path, save_path)
+                return {'ok': True, 'path': save_path}
+            else:
+                return {'ok': False, 'cancelled': True}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+
 def start_flask():
     app.run(host='127.0.0.1', port=8090, debug=False, use_reloader=False)
 
@@ -753,8 +826,9 @@ if __name__ == '__main__':
             t = threading.Thread(target=start_flask, daemon=True)
             t.start()
             wait_for_flask()
+            api = DesktopAPI()
             webview.create_window('PDF Ștampilă', 'http://127.0.0.1:8090',
-                                  width=1100, height=820, resizable=True)
+                                  width=1100, height=820, resizable=True, js_api=api)
             webview.start()
         except ImportError:
             app.run(host='0.0.0.0', port=8090, debug=False)
