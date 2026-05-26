@@ -28,7 +28,7 @@ jobs:
         run: |
           python -c "
           from PIL import Image
-          img = Image.open('stampila_curata.png').convert('RGBA')
+          img = Image.open('stamp_icon.png').convert('RGBA')
           img.save('stampila.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
           print('ICO generat.')
           "

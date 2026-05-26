@@ -27,7 +27,7 @@ os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
 
 
-def find_stamp_anchors(page, anchor_text='CONTASIST'):
+def find_stamp_anchors(page, anchor_text='Semnătură'):
     """Find position where stamp should be placed on a page.
     Simply searches for the anchor text and places stamp below its last occurrence.
     Returns list with one (center_x, y_bottom) tuple, or empty list if not found."""
@@ -80,7 +80,7 @@ def detect_tables(page):
 
 def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
                 manual_x=None, manual_y=None, manual_page=None, all_pages=False,
-                anchor_text='CONTASIST', opacity=0.5, rotation=0):
+                anchor_text='Semnătură', opacity=0.5, rotation=0):
     """Returns (pdf_bytes, total_stamps, warnings_list).
     warnings_list contains messages for pages where anchor was not found."""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -256,7 +256,7 @@ input[type=file]{display:none}
 <div id="txt-opts" style="margin-top:12px">
 <div class="og" style="max-width:400px">
 <label>Text ancoră (caută sub acest text)</label>
-<input type="text" id="anchor" value="CONTASIST" placeholder="Ex: CONTASIST, SRL, semnătură...">
+<input type="text" id="anchor" value="Semnătură" placeholder="Ex: Semnătură, VIZAT, Director...">
 </div>
 <div class="info" id="anchor-info">Caută textul din câmpul de mai sus și plasează ștampila sub textul găsit. Dacă nu găsește textul, afișează mesaj de înștiințare.</div>
 </div>

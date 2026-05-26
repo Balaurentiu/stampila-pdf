@@ -2,10 +2,7 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 datas = [
-    ('stampila_curata.png', '.'),
-    ('stampila_curata_dark.png', '.'),
-    ('stampila_extra.png', '.'),
-    ('stampila_original.jpg', '.'),
+    ('stamp_icon.png', '.'),
 ]
 datas += collect_data_files('webview')
 
