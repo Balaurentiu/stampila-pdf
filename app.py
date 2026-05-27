@@ -7,7 +7,7 @@ PDF Ștampilă v2 - Aplică ștampile pe documente PDF.
 - Opacitate, scară, aplicare pe toate paginile
 """
 
-import os, io, sys, time, socket, platform, subprocess, tempfile, shutil
+import os, io, sys, time, socket, platform, subprocess, shutil
 from flask import Flask, request, send_file, jsonify, render_template_string
 import fitz
 from PIL import Image
@@ -23,8 +23,10 @@ else:
 
 UPLOAD = os.path.join(_APP_DATA, 'uploads')
 OUTPUT = os.path.join(_APP_DATA, 'output')
+TEMP   = os.path.join(_APP_DATA, 'temp')
 os.makedirs(UPLOAD, exist_ok=True)
 os.makedirs(OUTPUT, exist_ok=True)
+os.makedirs(TEMP,   exist_ok=True)
 
 
 def find_stamp_anchors(page, anchor_text='Semnătură'):
@@ -728,7 +730,7 @@ def apply_prepare():
                                    all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
 
     token = str(int(time.time() * 1000))
-    tmp = tempfile.mktemp(suffix='.pdf')
+    tmp = os.path.join(TEMP, f'pending_{token}.pdf')
     with open(tmp, 'wb') as f:
         f.write(result_bytes)
     _pending_files[token] = tmp
