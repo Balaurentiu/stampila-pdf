@@ -36,13 +36,6 @@ jobs:
       - name: Compilează cu PyInstaller
         run: pyinstaller stampila.spec
 
-      - name: Forțează iconița în exe cu rcedit
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile rcedit.exe
-          .\rcedit.exe "dist\StampilaPDF\StampilaPDF.exe" --set-icon stampila.ico
-          $size = (Get-Item "dist\StampilaPDF\StampilaPDF.exe").Length
-          Write-Host "EXE size: $size bytes - Icon setat cu rcedit."
-
       - name: Instalează Inno Setup
         run: choco install innosetup --no-progress -y
 
