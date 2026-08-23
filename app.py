@@ -94,6 +94,13 @@ def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
     # Prepare stamp image
     stamp_img = Image.open(io.BytesIO(stamp_bytes))
 
+    # Downscale oversized stamps so the embedded image stays small.
+    # Displayed width is at most ~140*1.6 pt, so 600px is plenty even at high DPI.
+    MAX_STAMP_PX = 600
+    if max(stamp_img.size) > MAX_STAMP_PX:
+        stamp_img = stamp_img.convert("RGBA")
+        stamp_img.thumbnail((MAX_STAMP_PX, MAX_STAMP_PX), Image.LANCZOS)
+
     # Apply rotation (expand=True keeps full image visible after rotation)
     if rotation % 360 != 0:
         stamp_img = stamp_img.convert("RGBA")
@@ -128,7 +135,7 @@ def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
             page.insert_image(rect, stream=stamp_data)
             total += 1
         out = io.BytesIO()
-        doc.save(out)
+        doc.save(out, garbage=4, deflate=True)
         doc.close()
         out.seek(0)
         return out.getvalue(), total, warnings
@@ -188,7 +195,7 @@ def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
                 warnings.append(f'Pagina {pi+1}: nu s-au gasit tabele. Stampila NU a fost aplicata.')
 
     out = io.BytesIO()
-    doc.save(out)
+    doc.save(out, garbage=4, deflate=True)
     doc.close()
     out.seek(0)
     return out.getvalue(), total, warnings
@@ -323,6 +330,10 @@ input[type=file]{display:none}
 <div class="pa" id="pva" style="display:none;position:relative">
 <canvas id="cv" class="tc"></canvas>
 <div id="hl"></div>
+<div id="pg-nav" style="display:none;gap:8px;margin-top:10px">
+<button class="btn bp" style="flex:1" onclick="prevPage()">← Pagina anterioară</button>
+<button class="btn bs" style="flex:1" onclick="nextPage()">Pagina următoare →</button>
+</div>
 </div>
 <div id="sa"></div>
 <button class="btn bs" id="ab" onclick="as()" style="display:none;margin-top:12px">✅ Aplică Ștampila & Descarcă</button>
@@ -331,9 +342,10 @@ input[type=file]{display:none}
 
 <script>
 let PF=null,SF=null,MD='text',MX=null,MY=null,PW=0,PH=0;
-let INDIV=false,POS={},CURPG=0;
+let INDIV=false,POS={},CURPG=0,STAMP_IMG=null;
 document.getElementById('pi').onchange=e=>{PF=e.target.files[0];document.getElementById('pz').classList.add('ok');document.getElementById('pf').textContent=PF?PF.name:'';up();cr()};
-document.getElementById('si').onchange=e=>{SF=e.target.files[0];document.getElementById('sz').classList.add('ok');document.getElementById('sf').textContent=SF?SF.name:'';cr()};
+document.getElementById('si').onchange=e=>{SF=e.target.files[0];document.getElementById('sz').classList.add('ok');document.getElementById('sf').textContent=SF?SF.name:'';cr();
+  if(SF){STAMP_IMG=new Image();STAMP_IMG.src=URL.createObjectURL(SF);}else{STAMP_IMG=null;}};
 ['pz','sz'].forEach(id=>{let z=document.getElementById(id);z.ondragover=e=>{e.preventDefault();z.classList.add('dg')};z.ondragleave=()=>z.classList.remove('dg');z.ondrop=e=>{e.preventDefault();z.classList.remove('dg');let inp=id==='pz'?'pi':'si';document.getElementById(inp).files=e.dataTransfer.files;document.getElementById(inp).dispatchEvent(new Event('change'))}});
 document.getElementById('pp').onchange=()=>{if(MD==='manual'&&INDIV&&PF&&SF)gp()};
 
@@ -345,17 +357,39 @@ function sm(m){
   document.getElementById('txt-opts').style.display=m==='text'?'block':'none';
   document.getElementById('man-opts').style.display=m==='manual'?'block':'none';
   MX=null;MY=null;
+  if(m!=='manual'){
+    document.getElementById('indiv').checked=false;
+    INDIV=false;POS={};
+    document.getElementById('indiv-info').style.display='none';
+    document.getElementById('pg-nav').style.display='none';
+    document.getElementById('pos-status').innerHTML='';
+  }
 }
 
 function ti(){
   INDIV=document.getElementById('indiv').checked;
   document.getElementById('indiv-info').style.display=INDIV?'block':'none';
+  document.getElementById('pg-nav').style.display=INDIV?'flex':'none';
   // "Aplică pe TOATE paginile" nu are sens împreună cu poziționarea individuală
   let ap=document.getElementById('ap');
   ap.disabled=INDIV;
   if(INDIV)ap.checked=false;
   POS={};MX=null;MY=null;
   updPosStatus();
+}
+
+function nextPage(){
+  let s=document.getElementById('pp');
+  let i=parseInt(s.value)||0;
+  if(i<s.options.length-1){s.value=i+1;gp();}
+  else{ss('info','Ești deja la ultima pagină.');}
+}
+
+function prevPage(){
+  let s=document.getElementById('pp');
+  let i=parseInt(s.value)||0;
+  if(i>0){s.value=i-1;gp();}
+  else{ss('info','Ești deja la prima pagină.');}
 }
 
 function updPosStatus(){
@@ -414,11 +448,33 @@ async function gp(){
       let drawMarker=()=>{
         ctx.drawImage(img,0,0);
         if(MX===null||MY===null)return;
-        let stW=150*parseFloat(document.getElementById('sc').value)*scale;
-        let stH=60*scale;
-        ctx.fillStyle='rgba(56,189,248,.25)';ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
-        ctx.fillRect(MX*scale,MY*scale,stW,stH);
-        ctx.strokeRect(MX*scale,MY*scale,stW,stH);
+        let scaleVal=parseFloat(document.getElementById('sc').value);
+        let x=MX*scale,y=MY*scale;
+        if(STAMP_IMG&&STAMP_IMG.complete&&STAMP_IMG.naturalWidth){
+          // Draw the actual stamp image at the right size, opacity and rotation
+          let rot=parseInt(document.getElementById('rt').value)||0;
+          let op=parseFloat(document.getElementById('op').value);
+          let ratio=STAMP_IMG.naturalHeight/STAMP_IMG.naturalWidth;
+          let wPx=140*scaleVal*scale,hPx=140*scaleVal*ratio*scale; // 140pt base = backend target_w
+          ctx.save();
+          ctx.globalAlpha=isNaN(op)?1:op;
+          if(rot%360!==0){
+            ctx.translate(x+wPx/2,y+hPx/2);
+            ctx.rotate(-rot*Math.PI/180); // PIL rotă în sens trigonometric pentru unghi pozitiv
+            ctx.drawImage(STAMP_IMG,-wPx/2,-hPx/2,wPx,hPx);
+          }else{
+            ctx.drawImage(STAMP_IMG,x,y,wPx,hPx);
+          }
+          ctx.restore();
+          ctx.strokeStyle='rgba(56,189,248,.7)';ctx.lineWidth=1;
+          ctx.strokeRect(x,y,wPx,hPx);
+        }else{
+          // Fallback: dreptunghi dacă imaginea ștampilei nu e încă încărcată
+          let stW=150*scaleVal*scale,stH=60*scale;
+          ctx.fillStyle='rgba(56,189,248,.25)';ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
+          ctx.fillRect(x,y,stW,stH);
+          ctx.strokeRect(x,y,stW,stH);
+        }
       };
       // If this page already has a stored position (individual mode), show it
       if(MD==='manual'&&INDIV&&POS[CURPG]){MX=POS[CURPG].x;MY=POS[CURPG].y;drawMarker();}
