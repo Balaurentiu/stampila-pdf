@@ -7,7 +7,7 @@ PDF Ștampilă v2 - Aplică ștampile pe documente PDF.
 - Opacitate, scară, aplicare pe toate paginile
 """
 
-import os, io, sys, time, socket, platform, subprocess, shutil
+import os, io, sys, time, socket, platform, subprocess, shutil, json
 from flask import Flask, request, send_file, jsonify, render_template_string
 import fitz
 from PIL import Image
@@ -82,9 +82,13 @@ def detect_tables(page):
 
 def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
                 manual_x=None, manual_y=None, manual_page=None, all_pages=False,
-                anchor_text='Semnătură', opacity=0.5, rotation=0):
+                anchor_text='Semnătură', opacity=0.5, rotation=0,
+                manual_positions=None):
     """Returns (pdf_bytes, total_stamps, warnings_list).
-    warnings_list contains messages for pages where anchor was not found."""
+    warnings_list contains messages for pages where anchor was not found.
+
+    manual_positions: optional dict {page_index: (x, y)} for placing the stamp
+    at a different, individually chosen position on each page (manual mode)."""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     # Prepare stamp image
@@ -110,6 +114,24 @@ def apply_stamp(pdf_bytes, stamp_bytes, mode='text', scale=0.75, margin=15,
     target_w = 140 * scale  # 140pt base width (close to original stamp size)
     sf = target_w / w_px
     sw, sh = w_px * sf, h_px * sf
+
+    # Individual manual mode: a different (x, y) per page.
+    if mode == 'manual' and manual_positions:
+        total = 0
+        warnings = []
+        for pi in sorted(manual_positions.keys()):
+            if pi < 0 or pi >= len(doc):
+                continue
+            mxp, myp = manual_positions[pi]
+            page = doc[pi]
+            rect = fitz.Rect(mxp, myp, mxp + sw, myp + sh)
+            page.insert_image(rect, stream=stamp_data)
+            total += 1
+        out = io.BytesIO()
+        doc.save(out)
+        doc.close()
+        out.seek(0)
+        return out.getvalue(), total, warnings
 
     pages = list(range(len(doc))) if all_pages else ([manual_page if manual_page is not None else 0])
     total = 0
@@ -264,6 +286,9 @@ input[type=file]{display:none}
 </div>
 <div id="man-opts" style="display:none;margin-top:8px">
 <div class="info">👆 Click pe preview pentru a poziționa ștampila. Coordonatele sunt în puncte PDF (corectate pentru landscape).</div>
+<div class="cbg"><input type="checkbox" id="indiv" onchange="ti()"><label for="indiv">Poziționare individuală pe fiecare pagină</label></div>
+<div class="info" id="indiv-info" style="display:none">📑 Pentru fiecare pagină: alege pagina din „Pagină preview", generează preview-ul și dă click pentru a plasa ștampila. Pozițiile se rețin separat pentru fiecare pagină. La final, exportă documentul complet ștampilat.</div>
+<div id="pos-status" style="margin-top:8px"></div>
 </div>
 <div class="opts" style="margin-top:14px">
 <div class="og"><label>Scară ștampilă</label><select id="sc">
@@ -306,9 +331,11 @@ input[type=file]{display:none}
 
 <script>
 let PF=null,SF=null,MD='text',MX=null,MY=null,PW=0,PH=0;
+let INDIV=false,POS={},CURPG=0;
 document.getElementById('pi').onchange=e=>{PF=e.target.files[0];document.getElementById('pz').classList.add('ok');document.getElementById('pf').textContent=PF?PF.name:'';up();cr()};
 document.getElementById('si').onchange=e=>{SF=e.target.files[0];document.getElementById('sz').classList.add('ok');document.getElementById('sf').textContent=SF?SF.name:'';cr()};
 ['pz','sz'].forEach(id=>{let z=document.getElementById(id);z.ondragover=e=>{e.preventDefault();z.classList.add('dg')};z.ondragleave=()=>z.classList.remove('dg');z.ondrop=e=>{e.preventDefault();z.classList.remove('dg');let inp=id==='pz'?'pi':'si';document.getElementById(inp).files=e.dataTransfer.files;document.getElementById(inp).dispatchEvent(new Event('change'))}});
+document.getElementById('pp').onchange=()=>{if(MD==='manual'&&INDIV&&PF&&SF)gp()};
 
 function sm(m){
   MD=m;
@@ -318,6 +345,26 @@ function sm(m){
   document.getElementById('txt-opts').style.display=m==='text'?'block':'none';
   document.getElementById('man-opts').style.display=m==='manual'?'block':'none';
   MX=null;MY=null;
+}
+
+function ti(){
+  INDIV=document.getElementById('indiv').checked;
+  document.getElementById('indiv-info').style.display=INDIV?'block':'none';
+  // "Aplică pe TOATE paginile" nu are sens împreună cu poziționarea individuală
+  let ap=document.getElementById('ap');
+  ap.disabled=INDIV;
+  if(INDIV)ap.checked=false;
+  POS={};MX=null;MY=null;
+  updPosStatus();
+}
+
+function updPosStatus(){
+  let el=document.getElementById('pos-status');
+  if(!INDIV){el.innerHTML='';return}
+  let keys=Object.keys(POS).map(Number).sort((a,b)=>a-b);
+  if(keys.length===0){el.innerHTML='<div class="st si">Nicio pagină poziționată încă.</div>';return}
+  let list=keys.map(k=>(k+1)).join(', ');
+  el.innerHTML='<div class="st ss">✅ Pagini poziționate ('+keys.length+'): '+list+'</div>';
 }
 
 function cr(){document.getElementById('pb').disabled=!(PF&&SF)}
@@ -345,6 +392,8 @@ async function gp(){
   f.append('rotation',document.getElementById('rt').value);
   f.append('mode',MD);
   f.append('anchor',document.getElementById('anchor').value);
+  CURPG=parseInt(document.getElementById('pp').value)||0;
+  if(MD==='manual'&&INDIV){MX=POS[CURPG]?POS[CURPG].x:null;MY=POS[CURPG]?POS[CURPG].y:null;}
   if(MD==='manual'&&MX!==null){f.append('manual_x',MX);f.append('manual_y',MY)}
 
   document.getElementById('pb').disabled=true;
@@ -362,6 +411,17 @@ async function gp(){
       cv.width=img.width;cv.height=img.height;
       ctx.drawImage(img,0,0);
       let scale=img.width/PW;
+      let drawMarker=()=>{
+        ctx.drawImage(img,0,0);
+        if(MX===null||MY===null)return;
+        let stW=150*parseFloat(document.getElementById('sc').value)*scale;
+        let stH=60*scale;
+        ctx.fillStyle='rgba(56,189,248,.25)';ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
+        ctx.fillRect(MX*scale,MY*scale,stW,stH);
+        ctx.strokeRect(MX*scale,MY*scale,stW,stH);
+      };
+      // If this page already has a stored position (individual mode), show it
+      if(MD==='manual'&&INDIV&&POS[CURPG]){MX=POS[CURPG].x;MY=POS[CURPG].y;drawMarker();}
       cv.onclick=e=>{
         if(MD!=='manual')return;
         let rect=cv.getBoundingClientRect();
@@ -369,14 +429,14 @@ async function gp(){
         // Convert click to PDF points (respecting actual page dimensions)
         MX=(e.clientX-rect.left)*sx/scale;
         MY=(e.clientY-rect.top)*sy/scale;
-        // Redraw + show stamp position marker
-        ctx.drawImage(img,0,0);
-        let stW=150*parseFloat(document.getElementById('sc').value)*scale;
-        let stH=60*scale;
-        ctx.fillStyle='rgba(56,189,248,.25)';ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
-        ctx.fillRect(MX*scale,MY*scale,stW,stH);
-        ctx.strokeRect(MX*scale,MY*scale,stW,stH);
-        ss('info','Poziție: X='+Math.round(MX)+', Y='+Math.round(MY)+' pt (pagină '+PW.toFixed(0)+'×'+PH.toFixed(0)+')');
+        drawMarker();
+        if(INDIV){
+          POS[CURPG]={x:MX,y:MY};
+          updPosStatus();
+          ss('info','Pagina '+(CURPG+1)+' poziționată: X='+Math.round(MX)+', Y='+Math.round(MY)+' pt. Poți trece la pagina următoare.');
+        }else{
+          ss('info','Poziție: X='+Math.round(MX)+', Y='+Math.round(MY)+' pt (pagină '+PW.toFixed(0)+'×'+PH.toFixed(0)+')');
+        }
       };
     };
     img.src=URL.createObjectURL(blob);
@@ -402,7 +462,10 @@ async function as(){
   f.append('anchor',document.getElementById('anchor').value);
   f.append('all_pages',document.getElementById('ap').checked?'1':'0');
   f.append('page',document.getElementById('pp').value);
-  if(MD==='manual'&&MX!==null){f.append('manual_x',MX);f.append('manual_y',MY)}
+  if(MD==='manual'&&INDIV){
+    if(Object.keys(POS).length===0){ss('error','Nu ai poziționat nicio pagină. Alege o pagină, generează preview și dă click pentru a plasa ștampila.');return}
+    f.append('positions',JSON.stringify(POS));
+  }else if(MD==='manual'&&MX!==null){f.append('manual_x',MX);f.append('manual_y',MY)}
 
   document.getElementById('ab').textContent='⏳ Procesare...';
   document.getElementById('ab').disabled=true;
@@ -448,6 +511,22 @@ function ss(t,m){document.getElementById('sa').innerHTML='<div class="st s'+t[0]
 </script>
 </body>
 </html>'''
+
+
+def parse_manual_positions(form):
+    """Parse the 'positions' form field (JSON {page_index: {x, y}})
+    into a dict {int page_index: (float x, float y)}, or None if absent/invalid."""
+    raw = form.get('positions')
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        result = {}
+        for k, v in data.items():
+            result[int(k)] = (float(v['x']), float(v['y']))
+        return result or None
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 @app.route('/')
@@ -519,11 +598,13 @@ def apply():
     mx = request.form.get('manual_x', type=float)
     my = request.form.get('manual_y', type=float)
     rot = int(request.form.get('rotation', 0))
+    positions = parse_manual_positions(request.form)
 
     result_bytes, n, warnings = apply_stamp(pdf_b, stamp_b, mode=md, scale=sc, margin=mg,
                                    manual_x=mx, manual_y=my, manual_page=pg,
-                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
-    
+                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot,
+                                   manual_positions=positions)
+
     name = (pf.filename or 'document').removesuffix('.pdf')
     response = send_file(io.BytesIO(result_bytes), mimetype='application/pdf',
                      as_attachment=True, download_name=f'{name}_stampilat.pdf')
@@ -724,10 +805,12 @@ def apply_prepare():
     mx = request.form.get('manual_x', type=float)
     my = request.form.get('manual_y', type=float)
     rot = int(request.form.get('rotation', 0))
+    positions = parse_manual_positions(request.form)
 
     result_bytes, n, warnings = apply_stamp(pdf_b, stamp_b, mode=md, scale=sc, margin=mg,
                                    manual_x=mx, manual_y=my, manual_page=pg,
-                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
+                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot,
+                                   manual_positions=positions)
 
     token = str(int(time.time() * 1000))
     tmp = os.path.join(TEMP, f'pending_{token}.pdf')
@@ -759,10 +842,12 @@ def apply_save():
     mx = request.form.get('manual_x', type=float)
     my = request.form.get('manual_y', type=float)
     rot = int(request.form.get('rotation', 0))
+    positions = parse_manual_positions(request.form)
 
     result_bytes, n, warnings = apply_stamp(pdf_b, stamp_b, mode=md, scale=sc, margin=mg,
                                    manual_x=mx, manual_y=my, manual_page=pg,
-                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot)
+                                   all_pages=ap, anchor_text=anchor, opacity=op, rotation=rot,
+                                   manual_positions=positions)
 
     name = (pf.filename or 'document').removesuffix('.pdf')
     downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
